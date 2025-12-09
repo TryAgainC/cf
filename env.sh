@@ -1,6 +1,6 @@
 #!/bin/sh
 # 一键最小化安装脚本（Debian / Ubuntu 专用）
-# 功能：安装 masscan + libpcap + xray + python3(aiohttp,requests) + setcap + curl/unzip
+# 功能：安装 masscan + libpcap + xray + python3(aiohttp,requests,tqdm,aiofiles) + setcap + curl/unzip
 set -eu
 
 XRAY_INSTALL_DIR="${XRAY_INSTALL_DIR:-/usr/local/bin}"
@@ -17,7 +17,8 @@ install_min_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y --no-install-recommends \
-    ca-certificates curl unzip python3 python3-requests python3-aiohttp \
+    ca-certificates curl unzip \
+    python3 python3-requests python3-aiohttp python3-tqdm python3-aiofiles \
     masscan libcap2-bin libpcap0.8 git gcc make libpcap-dev
   apt-get clean || true
   rm -rf /var/lib/apt/lists/* || true
@@ -100,8 +101,8 @@ verify_all() {
   printf "python3: "; python3 --version 2>/dev/null || echo "未安装"
   python3 - <<'PY'
 try:
-    import aiohttp, requests
-    print("[OK] 成功导入 aiohttp 和 requests")
+    import aiohttp, requests, tqdm, aiofiles
+    print("[OK] 成功导入 aiohttp, requests, tqdm, aiofiles")
 except Exception as e:
     print("[FAIL] Python 模块导入失败:", e)
 PY
@@ -115,7 +116,7 @@ main() {
   install_xray
   clean_up
   verify_all
-  log "✅ 所有组件已安装完毕，可直接运行：python3 loopcf.py"
+  log "✅ 所有组件已安装完毕，可直接运行：python3 loopcf.py 或 python3 cfxui.py"
 }
 
 main "$@"
