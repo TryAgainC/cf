@@ -7,7 +7,7 @@ XRAY_INSTALL_DIR="${XRAY_INSTALL_DIR:-/usr/local/bin}"
 XRAY_BIN="${XRAY_INSTALL_DIR}/xray"
 WORKDIR="$(mktemp -d)"
 
-log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
 cleanup_on_exit() {
   [ -n "${WORKDIR:-}" ] && rm -rf "$WORKDIR" 2>/dev/null || true
@@ -19,7 +19,6 @@ need_root() {
 }
 
 ensure_repos() {
-  # masscan / py3-aiohttp 位于 community 仓库，确保已启用
   [ -f /etc/apk/repositories ] || return 0
   if ! grep -q '/community' /etc/apk/repositories 2>/dev/null; then
     V="$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || true)"
@@ -30,12 +29,12 @@ ensure_repos() {
 }
 
 install_min_packages() {
-  apk update
   apk add --no-cache \
     ca-certificates curl unzip \
     python3 py3-requests py3-aiohttp \
     libcap libpcap \
-    git gcc make musl-dev libpcap-dev binutils
+    git gcc make musl-dev libpcap-dev binutils \
+    linux-headers
   rm -rf /var/cache/apk/* 2>/dev/null || true
 }
 
