@@ -58,6 +58,10 @@ build_masscan_from_source() {
   JOBS="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)"
   case "$JOBS" in ''|*[!0-9]*) JOBS=1 ;; esac
   [ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
+  
+  # 关键修复：显式指定 linux-headers 的头文件搜索路径
+  export CFLAGS="-I/usr/include -O2 -Wall"
+  
   make -C "$WORKDIR/masscan" -j"$JOBS" || make -C "$WORKDIR/masscan"
   install -m 0755 "$WORKDIR/masscan/bin/masscan" /usr/local/bin/masscan
   strip /usr/local/bin/masscan 2>/dev/null || true
