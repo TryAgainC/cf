@@ -1,5 +1,5 @@
 #!/bin/sh
-# 一键最小化安装脚本（Alpine Linux 专用）
+# 一键最小化安装脚本（Alpine Linux 专用，512M 磁盘友好版）
 # 功能：安装 masscan + libpcap + xray + python3(aiohttp,requests) + setcap + curl/unzip
 set -eu
 
@@ -11,6 +11,8 @@ log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
 cleanup_on_exit() {
   [ -n "${WORKDIR:-}" ] && rm -rf "$WORKDIR" 2>/dev/null || true
+  # 万一中途退出，也把临时编译工具清掉
+  apk del .build-deps 2>/dev/null || true
 }
 trap cleanup_on_exit EXIT INT TERM
 
@@ -29,43 +31,55 @@ ensure_repos() {
 }
 
 install_min_packages() {
+  # 只装运行时必需：不含任何编译器
   apk add --no-cache \
     ca-certificates curl unzip \
     python3 py3-requests py3-aiohttp \
-    libcap libpcap \
-    git gcc make musl-dev libpcap-dev binutils \
-    linux-headers
+    libcap libcap-utils libpcap
   rm -rf /var/cache/apk/* 2>/dev/null || true
 }
 
-check_masscan() {
-  if ! command -v masscan >/dev/null 2>&1; then
-    log "masscan 未安装，开始源码编译..."
-    build_masscan_from_source
-  else
+check_and_install_masscan() {
+  if command -v masscan >/dev/null 2>&1; then
     MPATH="$(command -v masscan)"
     log "检测 masscan: $MPATH"
     if command -v ldd >/dev/null 2>&1 && ldd "$MPATH" 2>/dev/null | grep -q "not found"; then
-      log "masscan 依赖缺失，重新编译..."
-      build_masscan_from_source
+      log "masscan 依赖缺失，重新安装..."
+    else
+      return 0
     fi
   fi
+
+  # 优先走仓库，节省 100MB+ 编译工具链
+  if apk add --no-cache masscan 2>/dev/null; then
+    log "已从仓库安装 masscan（最小开销）"
+    return 0
+  fi
+
+  log "仓库无 masscan，改用源码编译（临时安装编译工具）"
+  build_masscan_from_source
 }
 
 build_masscan_from_source() {
-  log "正在源码编译 masscan..."
+  # 用虚拟包名，编完可以一键卸载
+  apk add --no-cache --virtual .build-deps \
+    git gcc make musl-dev binutils linux-headers libpcap-dev
+
   git clone --depth=1 https://github.com/robertdavidgraham/masscan.git "$WORKDIR/masscan"
   JOBS="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)"
   case "$JOBS" in ''|*[!0-9]*) JOBS=1 ;; esac
   [ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
-  
-  # 关键修复：显式指定 linux-headers 的头文件搜索路径
+
   export CFLAGS="-I/usr/include -O2 -Wall"
-  
+
   make -C "$WORKDIR/masscan" -j"$JOBS" || make -C "$WORKDIR/masscan"
   install -m 0755 "$WORKDIR/masscan/bin/masscan" /usr/local/bin/masscan
   strip /usr/local/bin/masscan 2>/dev/null || true
-  log "masscan 编译并安装完成"
+
+  # 关键：立即删除编译工具，回收空间
+  apk del .build-deps 2>/dev/null || true
+  rm -rf "$WORKDIR/masscan" /var/cache/apk/* 2>/dev/null || true
+  log "masscan 编译并安装完成（编译工具已清理）"
 }
 
 apply_setcap() {
@@ -102,21 +116,24 @@ install_xray() {
 
   log "正在下载 xray：$URL"
   curl -fsSL --retry 5 -o "$WORKDIR/xray.zip" "$URL"
-  unzip -q "$WORKDIR/xray.zip" -d "$WORKDIR"
+  # 只解压需要的文件，省空间
+  unzip -q "$WORKDIR/xray.zip" xray geoip.dat geosite.dat -d "$WORKDIR" 2>/dev/null \
+    || unzip -q "$WORKDIR/xray.zip" -d "$WORKDIR"
   install -m 0755 "$WORKDIR/xray" "$XRAY_BIN"
+  rm -f "$WORKDIR/xray.zip"
   log "xray 安装完成：$XRAY_BIN"
 }
 
 clean_up() {
   log "清理无用文件..."
   rm -rf "$WORKDIR" 2>/dev/null || true
-  rm -rf /tmp/* /var/tmp/* /root/.cache 2>/dev/null || true
+  rm -rf /tmp/* /var/tmp/* /root/.cache /var/cache/apk/* 2>/dev/null || true
 }
 
 verify_all() {
   log "验证组件："
-  printf "masscan: "; command -v masscan >/dev/null 2>&1 && masscan --version | head -n1 || echo "未安装"
-  printf "xray:    "; command -v xray >/dev/null 2>&1 && xray -version | head -n1 || echo "未安装"
+  printf "masscan: "; command -v masscan >/dev/null 2>&1 && masscan --version 2>&1 | head -n1 || echo "未安装"
+  printf "xray:    "; (command -v xray >/dev/null 2>&1 && xray -version 2>&1 | head -n1) || ([ -x "$XRAY_BIN" ] && "$XRAY_BIN" -version 2>&1 | head -n1) || echo "未安装"
   printf "python3: "; python3 --version 2>/dev/null || echo "未安装"
   python3 - <<'PY'
 try:
@@ -125,13 +142,16 @@ try:
 except Exception as e:
     print("[FAIL] Python 模块导入失败:", e)
 PY
+  echo
+  echo "磁盘占用："
+  df -h / | awk 'NR==1 || /\/$/'
 }
 
 main() {
   need_root
   ensure_repos
   install_min_packages
-  check_masscan
+  check_and_install_masscan
   apply_setcap
   install_xray
   clean_up
